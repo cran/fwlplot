@@ -5,9 +5,9 @@
 \alias{fwlplot}
 \title{FWL Plot}
 \usage{
-fwl_plot(fml, data, ggplot = FALSE, n_sample = NULL, ...)
+fwl_plot(fml, data, ggplot = FALSE, n_sample = 1000, alpha = 0.5, ...)
 
-fwlplot(fml, data, ggplot = FALSE, n_sample = NULL, ...)
+fwlplot(fml, data, ggplot = FALSE, n_sample = 1000, alpha = 0.5, ...)
 }
 \arguments{
 \item{fml}{Of the form \code{y ~ x + covs | fes} following the fixest formula syntax. The x variable you want plotted should come first.}
@@ -16,13 +16,15 @@ fwlplot(fml, data, ggplot = FALSE, n_sample = NULL, ...)
 
 \item{ggplot}{Boolean. Default is to use base R plot but if TRUE, use ggplot.}
 
-\item{n_sample}{Numeric. Number of observations to sample for each facet.
+\item{n_sample}{Numeric. Number of observations to sample for each facet.}
+
+\item{alpha}{Numeric. Alpha transparency of each individual point.
 If NULL, will plot all rows.}
 
 \item{...}{Additional arguments passed to \code{fixest::feols}.}
 }
 \value{
-Either NULL if \code{ggplot = FALSE} or a ggplot object if \code{ggplot = TRUE}.
+Either NULL if \code{ggplot = FALSE} or a ggplot object if \code{ggplot = TRUE}. In either case, plots the figure.
 }
 \description{
 This function creates a bivariate plot of \code{y} and \code{x} after residualizing over a set of covariates \code{w}.

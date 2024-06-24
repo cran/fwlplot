@@ -6,6 +6,7 @@
 #' @param data A `dataframe` object that contains the variables in `fml`.
 #' @param ggplot Boolean. Default is to use base R plot but if TRUE, use ggplot.
 #' @param n_sample Numeric. Number of observations to sample for each facet.
+#' @param alpha Numeric. Alpha transparency of each individual point.
 #'  If NULL, will plot all rows.
 #' @param ... Additional arguments passed to `fixest::feols`.
 #' @examples
@@ -13,22 +14,17 @@
 #' fwl_plot(mpg ~ hp + wt | cyl, mtcars)
 #' }
 #'
-#' @return Either NULL if `ggplot = FALSE` or a ggplot object if `ggplot = TRUE`.
+#' @return Either NULL if `ggplot = FALSE` or a ggplot object if `ggplot = TRUE`. In either case, plots the figure.
 #'
 #' @export
-fwl_plot <- function(fml, data, ggplot = FALSE, n_sample = NULL, ...) {
+fwl_plot <- function(fml, data, ggplot = FALSE, n_sample = 1000, alpha = 0.5, ...) {
   pt_est <- fixest::feols(
     fml, data,
     notes = FALSE, ...
   )
 
-  # Reset
-  fixest::setFixest_fml(..fwl_plot_FE = ~1)
-  fixest::setFixest_fml(..fwl_plot_x = ~1)
-  fixest::setFixest_fml(..fwl_plot_w = ~1)
-  fixest::setFixest_fml(..fwl_plot_y = ~1)
-
   ## Process formula -----------------------------------------------------------
+  reset_fixest_fmla()
   fml <- fixest::xpd(fml)
   parts <- get_fml_parts(fml)
 
@@ -64,24 +60,14 @@ fwl_plot <- function(fml, data, ggplot = FALSE, n_sample = NULL, ...) {
   )
   fixest::setFixest_fml(..fwl_plot_outcomes = outcome_fml)
 
-
-  ## Create formula ------------------------------------------------------------
   if (has_w & has_fe) {
-    fml_new <- fixest::xpd(
-      ..fwl_plot_outcomes ~ ..fwl_plot_w | ..fwl_plot_FE
-    )
+    fml_new <- fixest::xpd(..fwl_plot_outcomes ~ ..fwl_plot_w | ..fwl_plot_FE)
   } else if (has_fe) {
-    fml_new <- fixest::xpd(
-      ..fwl_plot_outcomes ~ 1 | ..fwl_plot_FE
-    )
+    fml_new <- fixest::xpd(..fwl_plot_outcomes ~ 1 | ..fwl_plot_FE)
   } else if (has_w) {
-    fml_new <- fixest::xpd(
-      ..fwl_plot_outcomes ~ ..fwl_plot_w
-    )
+    fml_new <- fixest::xpd(..fwl_plot_outcomes ~ ..fwl_plot_w)
   } else {
-    fml_new <- fixest::xpd(
-      ..fwl_plot_outcomes ~ 0
-    )
+    fml_new <- fixest::xpd(..fwl_plot_outcomes ~ 0)
   }
 
   ## Residualize ---------------------------------------------------------------
@@ -98,18 +84,22 @@ fwl_plot <- function(fml, data, ggplot = FALSE, n_sample = NULL, ...) {
     resids <- get_resids_no_cov(pt_est, x_var, n_sample)
   }
 
+  reset_fixest_fmla()
+
   ## Plot ----------------------------------------------------------------------
 
   if (ggplot == FALSE) {
     plot_resids_base_r(
       resids, x_var, y_vars,
-      is_residualized = should_run_reg
+      is_residualized = should_run_reg,
+      alpha = alpha
     )
     invisible(NULL)
   } else {
     plot <- plot_resids_ggplot(
       resids, x_var, y_vars,
-      is_residualized = should_run_reg
+      is_residualized = should_run_reg,
+      alpha = alpha
     )
     return(plot)
   }
@@ -120,7 +110,11 @@ fwl_plot <- function(fml, data, ggplot = FALSE, n_sample = NULL, ...) {
 fwlplot <- fwl_plot
 
 # ggplot2 implementation
-plot_resids_ggplot <- function(resids, x_var, y_vars, is_residualized) {
+plot_resids_ggplot <- function(resids, x_var, y_vars, is_residualized, alpha = 1) {
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("The option `ggplot = TRUE` was used, but `ggplot2` is not installed")
+  }
+
   # Fix: "no visibile binding for global variable"
   var <- x_resid <- y_resid <- fit <- lwr <- upr <- NULL
 
@@ -197,7 +191,8 @@ plot_resids_ggplot <- function(resids, x_var, y_vars, is_residualized) {
     ggplot2::geom_point(
       mapping = ggplot2::aes(
         x = x_resid, y = y_resid
-      )
+      ),
+      alpha = alpha
     ) +
     facet +
     ggplot2::labs(
@@ -219,107 +214,55 @@ is_theme_default <- function() {
 }
 
 # Base R implementation
-plot_resids_base_r <- function(resids, x_var, y_vars, is_residualized) {
-
-  # Preserve user settings
-  oldpar <- graphics::par(no.readonly = TRUE)
-  on.exit(graphics::par(oldpar))
-
-  # Needs to be in this order to output in the correct ordering for `par(mfcol)`
-  resids_fitted <- split(resids, interaction(resids$var, resids$sample))
-
-  # Get ranges for plots
-  split <- split(resids, resids$var)
-  x_range <- range(resids$x_resid)
-  y_range <- lapply(split, function(df) range(df$y_resid) * 1.05)
-
-  # Setup facets
-  n_vars <- length(unique(resids$var))
-  n_samples <- length(unique(resids$sample))
-  if (n_samples == 1 & n_vars > 1) {
-    facets <- c(1, n_vars)
+plot_resids_base_r <- function(resids, x_var, y_vars, is_residualized, alpha = 1) {
+  y_lab = ""
+  x_lab = ifelse(is_residualized, paste0("Residualized ", x_var), x_var)
+  n_unique_var = length(unique(resids$var))
+  n_unique_sample = length(unique(resids$sample))
+   
+  if (n_unique_var > 1 & n_unique_sample > 1) {
+    facet_fml = var ~ sample
+  } else if (n_unique_var > 1) {
+    facet_fml = ~ var
+  } else if (n_unique_sample > 1) {
+    facet_fml = ~ sample
   } else {
-    facets <- c(n_vars, n_samples)
+    facet_fml = NULL
+    y_lab = ifelse(is_residualized, paste0("Residualized ", y_vars), y_vars)
   }
-  n_facets <- Reduce(`*`, facets)
-  graphics::par(
-    mfcol = facets,
-    ps = 12,
-    # c(b, l, t, r)
-    oma = c(0, 0, 1, 0)
+
+  if (is_residualized) {
+    resids$var <- paste0("Residualized ", resids$var)
+  }
+
+  with(
+    resids,
+    tinyplot::tinyplot(
+      y_resid ~ x_resid,
+      facet = facet_fml,
+      ylab = y_lab,
+      xlab = x_lab,
+      pch = 19,
+      alpha = alpha,
+      grid = TRUE#, frame = FALSE
+    )
   )
-
-  # Start plotting each grid
-  for (i in seq_along(resids_fitted)) {
-    df <- resids_fitted[[i]]
-    df <- df[order(df$x_resid), ]
-    outcome_var <- df$var[1]
-
-    # Custom margins for each plot
-    this_row <- ((i - 1) %% facets[1]) + 1
-    this_col <- ceiling(i / facets[1])
-
-    # Setup margins
-    mar_t <- 1
-    mar_b <- 1
-    mar_l <- 1
-    mar_r <- 0
-    if (this_row == 1) {
-      if (n_samples > 1) {
-        mar_t <- 4
-      } else {
-        mar_t <- 1
-      }
-    }
-    if (this_col == 1 | n_samples == 1) {
-      mar_l <- 4
-    }
-    if (n_samples == 1 & n_vars > 1) {
-      mar_r <- 1
-    }
-    if (this_row == facets[1]) {
-      mar_b <- 4
-    }
-    graphics::par(mar = c(mar_b, mar_l, mar_t, mar_r))
-
-    # Plot points
-    graphics::plot(
-      x = df$x_resid, y = df$y_resid, pch = 16,
-      xlim = x_range, ylim = y_range[[outcome_var]],
-      # frame.plot = FALSE,
-      axes = FALSE,
-      xlab = "", ylab = "",
-      panel.first = {
-        graphics::grid()
-        graphics::box()
-      }
+  with(
+    resids,
+    tinyplot::tinyplot(
+      fit ~ x_resid,
+      ymin = lwr, ymax = upr,
+      facet = facet_fml,
+      type = "ribbon",
+      col = "darkcyan", fill = "darkcyan",
+      add = TRUE
     )
+  )
+}
 
-    # best of fit line and CI
-    graphics::polygon(
-      c(df$x_resid, rev(df$x_resid)), c(df$lwr, rev(df$upr)),
-      col = grDevices::adjustcolor("gray", 0.3), border = NA
-    )
-    graphics::lines(df$x_resid, y = df$fit, lwd = 2, col = "darkgreen")
-
-    # Setup axis and sample labels
-    add_x_axis <- (this_row == facets[1])
-    add_y_axis <- (this_col == 1 | n_samples == 1)
-    add_facet_label <- (this_row == 1 & n_samples > 1)
-
-    if (add_x_axis) {
-      graphics::axis(1, lty = 0)
-      graphics::title(xlab = paste0("Residualized ", x_var))
-    }
-    if (add_y_axis) {
-      graphics::axis(2, lty = 0, las = 1)
-      graphics::title(ylab = paste0("Residualized ", outcome_var))
-    }
-    if (add_facet_label) {
-      graphics::mtext(
-        sub(".*\\.", "", names(resids_fitted))[i],
-        side = 3
-      )
-    }
-  }
+reset_fixest_fmla <- function() {
+  fixest::setFixest_fml(..fwl_plot_FE = ~1)
+  fixest::setFixest_fml(..fwl_plot_x = ~1)
+  fixest::setFixest_fml(..fwl_plot_w = ~1)
+  fixest::setFixest_fml(..fwl_plot_y = ~1)
 }
